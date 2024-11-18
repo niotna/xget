@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# Get the window ID
+wid=$(xwininfo | grep 'Window id:' | cut -d" " -f4)
+if [ -z "$wid" ]; then
+  echo "Error: Unable to retrieve the window ID."
+  exit 1
+fi
+
+# Get the PID associated with the window
+pid=$(xprop -id "$wid" | grep "^_NET_WM_PID" | cut -d" " -f3)
+if ! echo "$pid" | grep -qE '^[0-9]+$'; then
+  cat <<EOF 1>&2
+xpid ERROR: Unable to get the PID for the selected window.
+            Window ID:   $wid
+            PID: $pid
+EOF
+  exit 1
+fi
+
+# Retrieve the actual executable path
+exe_path=$(readlink -f /proc/$pid/exe 2>/dev/null)
+if [ -z "$exe_path" ]; then
+  exe_path="Executable path not found"
+fi
+
+# Use the exact executable name to search with 'which', including possible aliases
+app_name=$(basename "$exe_path")
+which_app=$(which "$app_name" 2>/dev/null)
+
+# If `which` does not find the exact name, try potential aliases
+if [ -z "$which_app" ]; then
+  for possible_alias in brave brave-browser; do
+    which_app=$(which "$possible_alias" 2>/dev/null)
+    [ -n "$which_app" ] && break
+  done
+  [ -z "$which_app" ] && which_app="Executable path not found"
+fi
+
+# Retrieve user and group permissions
+user=$(ps -o user= -p $pid)
+group=$(ps -o group= -p $pid)
+
+# Retrieve resource usage
+cpu_usage=$(ps -p $pid -o %cpu | tail -n 1)
+mem_usage_percent=$(ps -p $pid -o %mem | tail -n 1)
+
+# Retrieve memory usage in bytes (VmRSS)
+mem_usage_bytes=$(grep VmRSS /proc/$pid/status | awk '{print $2}')
+if [ -z "$mem_usage_bytes" ]; then
+  mem_usage_formatted="Memory info not available"
+else
+  # Convert the memory from KB to GB
+  mem_usage_gb=$(echo "scale=2; $mem_usage_bytes/1024/1024" | bc)
+  mem_usage_formatted="${mem_usage_gb}GB (${mem_usage_percent}%)"
+fi
+
+# Displaying the results
+cat <<EOF
+PID : $pid
+Application name : $app_name
+Executable path : $exe_path
+Path from which : $which_app
+User : $user
+Group : $group
+CPU usage : $cpu_usage%
+Memory usage : $mem_usage_formatted
+EOF
+
+exit 0
